@@ -9,7 +9,8 @@ pub fn slice(
     k_slices: usize,
     pizza_phase: f64,
     axis_rotation_deg: f64,
-    snap_tolerance: f64
+    snap_tolerance: f64,
+    center_radius: f64
 ) -> Result<Vec<WasmPolygon>, String> {
     let ext: Vec<Coord<f64>> = polygon.exterior.iter().map(|p| Coord { x: p.x, y: p.y }).collect();
     if ext.is_empty() { return Ok(vec![]); }
@@ -17,7 +18,7 @@ pub fn slice(
     
     let subfields = grid_slice(&geo_poly, n_subfields, axis_rotation_deg);
     
-    let all_slices = radial_slice_with_snap(&subfields, k_slices, pizza_phase, snap_tolerance);
+    let all_slices = radial_slice_with_snap(&subfields, k_slices, pizza_phase, snap_tolerance, center_radius);
     
     Ok(all_slices.into_iter().map(geo_to_wasm).collect())
 }
@@ -197,16 +198,16 @@ fn radial_slice_with_snap(
     k: usize,
     phase: f64,
     snap_tolerance: f64,
+    center_radius: f64,
 ) -> Vec<Polygon<f64>> {
     if k <= 1 {
         return subfields.to_vec();
     }
     
-    // Step 1: For each subfield, find the K radial ray angles (equal-area, phase-aware)
-    // and the points where those rays intersect the subfield boundary.
     let mut all_ray_angles: Vec<Vec<f64>> = Vec::new();
     let mut all_centroids: Vec<Point<f64>> = Vec::new();
-    let mut all_boundary_points: Vec<Vec<Coord<f64>>> = Vec::new(); // ray-boundary intersections
+    let mut all_boundary_points: Vec<Vec<Coord<f64>>> = Vec::new();
+    let mut all_v_pts: Vec<Vec<Coord<f64>>> = Vec::new();
     
     for sf in subfields {
         let centroid = sf.centroid().unwrap_or(Point::new(0., 0.));
@@ -214,23 +215,51 @@ fn radial_slice_with_snap(
         
         let bbox = sf.bounding_rect().unwrap_or(Rect::new(Coord{x:0.,y:0.}, Coord{x:1.,y:1.}));
         let r = ((bbox.max().x - bbox.min().x).powi(2) + (bbox.max().y - bbox.min().y).powi(2)).sqrt() * 2.0;
-        let target_area = sf.unsigned_area() / k as f64;
+        
+        let use_void = center_radius > 0.0 && k > 1;
+        let void_radius = if use_void {
+            center_radius
+        } else {
+            0.0
+        };
+        
+        // Vertices of the regular K-gon
+        let mut v_pts = Vec::new();
+        for i in 0..k {
+            let phi = phase * 2.0 * PI + (i as f64) * 2.0 * PI / (k as f64);
+            v_pts.push(Coord {
+                x: centroid.x() + void_radius * phi.cos(),
+                y: centroid.y() + void_radius * phi.sin(),
+            });
+        }
+        all_v_pts.push(v_pts.clone());
+        
+        let void_area = if use_void && k > 2 {
+            let mut void_coords = v_pts.clone();
+            void_coords.push(v_pts[0]);
+            Polygon::new(LineString::from(void_coords), vec![]).unsigned_area()
+        } else {
+            0.0
+        };
+        
+        let target_area = (sf.unsigned_area() - void_area) / k as f64;
         
         let mut angles = Vec::new();
         let mut boundary_pts = Vec::new();
         let mut current_angle = phase * 2.0 * PI;
         
         angles.push(current_angle);
-        // Find the point where this ray hits the boundary
-        boundary_pts.push(ray_boundary_intersection(centroid, current_angle, r, sf));
+        boundary_pts.push(ray_boundary_intersection_from_point(v_pts[0], current_angle, r, sf));
         
-        for _ in 1..k {
+        for i in 1..k {
             let mut min_theta = current_angle;
             let mut max_theta = current_angle + 2.0 * PI;
+            let v_start = v_pts[i - 1];
+            let v_end = v_pts[i];
             
             for _ in 0..40 {
                 let mid_theta = (min_theta + max_theta) / 2.0;
-                let wedge = create_wedge(centroid, r, current_angle, mid_theta);
+                let wedge = create_search_wedge(centroid, r, current_angle, mid_theta, v_start, v_end);
                 let intersect = sf.intersection(&wedge);
                 let area = intersect.unsigned_area();
                 if area < target_area {
@@ -241,7 +270,7 @@ fn radial_slice_with_snap(
             }
             current_angle = (min_theta + max_theta) / 2.0;
             angles.push(current_angle);
-            boundary_pts.push(ray_boundary_intersection(centroid, current_angle, r, sf));
+            boundary_pts.push(ray_boundary_intersection_from_point(v_pts[i], current_angle, r, sf));
         }
         
         all_ray_angles.push(angles);
@@ -253,11 +282,9 @@ fn radial_slice_with_snap(
         let tol_sq = snap_tolerance * snap_tolerance;
         for i in 0..subfields.len() {
             for j in (i+1)..subfields.len() {
-                // Check if subfields i and j share a boundary (they're neighbors)
                 if !subfields_share_boundary(&subfields[i], &subfields[j], snap_tolerance * 5.0) {
                     continue;
                 }
-                // Try to snap points from i to j and vice versa
                 for pi in 0..all_boundary_points[i].len() {
                     for pj in 0..all_boundary_points[j].len() {
                         let a = all_boundary_points[i][pi];
@@ -281,25 +308,31 @@ fn radial_slice_with_snap(
         let centroid = all_centroids[sf_idx];
         let angles = &all_ray_angles[sf_idx];
         let bnd_pts = &all_boundary_points[sf_idx];
+        let v_pts = &all_v_pts[sf_idx];
+        
         let bbox = sf.bounding_rect().unwrap_or(Rect::new(Coord{x:0.,y:0.}, Coord{x:1.,y:1.}));
         let r = ((bbox.max().x - bbox.min().x).powi(2) + (bbox.max().y - bbox.min().y).powi(2)).sqrt() * 2.0;
+        let use_void = center_radius > 0.0 && k > 1;
         
         for slice_idx in 0..k {
             let angle_start = angles[slice_idx];
-            let angle_end = if slice_idx + 1 < k {
-                angles[slice_idx + 1]
-            } else {
-                angles[0] + 2.0 * PI
-            };
+            let angle_end = if slice_idx + 1 < k { angles[slice_idx + 1] } else { angles[0] + 2.0 * PI };
+            let end_idx = if slice_idx + 1 < k { slice_idx + 1 } else { 0 };
             
-            // Build a wedge that goes from angle_start to angle_end,
-            // but use snapped boundary points for the first and last ray
-            let wedge = create_wedge_with_endpoints(
-                centroid, r,
-                angle_start, angle_end,
-                bnd_pts[slice_idx],
-                bnd_pts[if slice_idx + 1 < k { slice_idx + 1 } else { 0 }],
-            );
+            let wedge = if use_void {
+                create_wedge_with_void(
+                    centroid, r, 0.0,
+                    angle_start, angle_end,
+                    bnd_pts[slice_idx], bnd_pts[end_idx],
+                    v_pts[slice_idx], v_pts[end_idx],
+                )
+            } else {
+                create_wedge_with_endpoints(
+                    centroid, r,
+                    angle_start, angle_end,
+                    bnd_pts[slice_idx], bnd_pts[end_idx],
+                )
+            };
             
             let intersect = sf.intersection(&wedge);
             if let Some(p) = get_largest_polygon(&intersect) {
@@ -311,14 +344,11 @@ fn radial_slice_with_snap(
     result
 }
 
-/// Find where a ray from `center` at angle `theta` intersects the polygon boundary.
-fn ray_boundary_intersection(center: Point<f64>, theta: f64, r: f64, poly: &Polygon<f64>) -> Coord<f64> {
+fn ray_boundary_intersection_from_point(start: Coord<f64>, theta: f64, r: f64, poly: &Polygon<f64>) -> Coord<f64> {
     let far = Coord {
-        x: center.x() + r * theta.cos(),
-        y: center.y() + r * theta.sin(),
+        x: start.x + r * theta.cos(),
+        y: start.y + r * theta.sin(),
     };
-    let cx = center.x();
-    let cy = center.y();
     
     let coords = &poly.exterior().0;
     let mut best_t = f64::MAX;
@@ -328,7 +358,7 @@ fn ray_boundary_intersection(center: Point<f64>, theta: f64, r: f64, poly: &Poly
         let p1 = coords[i];
         let p2 = coords[i + 1];
         
-        if let Some((t, pt)) = ray_segment_intersection(cx, cy, far.x, far.y, p1, p2) {
+        if let Some((t, pt)) = ray_segment_intersection(start.x, start.y, far.x, far.y, p1, p2) {
             if t > 0.0 && t < best_t {
                 best_t = t;
                 best_point = pt;
@@ -402,6 +432,83 @@ fn create_wedge_with_endpoints(
     // End with snapped endpoint
     coords.push(end_pt);
     coords.push(Coord { x: center.x(), y: center.y() });
+    Polygon::new(LineString::from(coords), vec![])
+}
+
+fn create_search_wedge(
+    centroid: Point<f64>, r: f64,
+    theta_start: f64, theta_end: f64,
+    v_start: Coord<f64>, v_end: Coord<f64>,
+) -> Polygon<f64> {
+    let mut coords = vec![v_start];
+    coords.push(v_end);
+    
+    let far_end = Coord {
+        x: v_end.x + r * theta_end.cos(),
+        y: v_end.y + r * theta_end.sin(),
+    };
+    coords.push(far_end);
+    
+    let steps = 30;
+    for i in 1..steps {
+        let t = theta_end - (theta_end - theta_start) * (i as f64 / steps as f64);
+        coords.push(Coord {
+            x: centroid.x() + r * t.cos(),
+            y: centroid.y() + r * t.sin(),
+        });
+    }
+    
+    let far_start = Coord {
+        x: v_start.x + r * theta_start.cos(),
+        y: v_start.y + r * theta_start.sin(),
+    };
+    coords.push(far_start);
+    coords.push(v_start);
+    
+    Polygon::new(LineString::from(coords), vec![])
+}
+
+/// Create a wedge where the tip is replaced by a segment from the central void.
+fn create_wedge_with_void(
+    center: Point<f64>, radius: f64, _void_radius: f64,
+    theta1: f64, theta2: f64,
+    start_pt: Coord<f64>, end_pt: Coord<f64>,
+    v_start: Coord<f64>, v_end: Coord<f64>,
+) -> Polygon<f64> {
+    let mut coords = vec![v_start];
+    coords.push(start_pt);
+    
+    let steps = 30;
+    for i in 1..steps {
+        let t = theta1 + (theta2 - theta1) * (i as f64 / steps as f64);
+        coords.push(Coord {
+            x: center.x() + radius * t.cos(),
+            y: center.y() + radius * t.sin(),
+        });
+    }
+    
+    coords.push(end_pt);
+    coords.push(v_end);
+    coords.push(v_start);
+    
+    Polygon::new(LineString::from(coords), vec![])
+}
+
+/// Create a regular polygon (K-gon) centered at `center` with circumradius `radius`.
+/// Vertices are placed at the angles defined by `ray_angles`.
+fn create_regular_polygon(center: Point<f64>, radius: f64, k: usize, ray_angles: &[f64]) -> Polygon<f64> {
+    let mut coords: Vec<Coord<f64>> = Vec::with_capacity(k + 1);
+    for i in 0..k {
+        let angle = ray_angles[i];
+        coords.push(Coord {
+            x: center.x() + radius * angle.cos(),
+            y: center.y() + radius * angle.sin(),
+        });
+    }
+    // Close the polygon
+    if let Some(first) = coords.first().cloned() {
+        coords.push(first);
+    }
     Polygon::new(LineString::from(coords), vec![])
 }
 

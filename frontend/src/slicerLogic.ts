@@ -15,11 +15,13 @@ export async function setupLogic() {
     const phaseSlider = document.getElementById('phase-slider') as HTMLInputElement;
     const axisSlider = document.getElementById('axis-slider') as HTMLInputElement;
     const snapSlider = document.getElementById('snap-slider') as HTMLInputElement;
+    const centerSlider = document.getElementById('center-slider') as HTMLInputElement;
     const valN = document.getElementById('val-n')!;
     const valK = document.getElementById('val-k')!;
     const valPhase = document.getElementById('val-phase')!;
     const valAxis = document.getElementById('val-axis')!;
     const valSnap = document.getElementById('val-snap')!;
+    const valCenter = document.getElementById('val-center')!;
     const downloadBtn = document.getElementById('download-btn') as HTMLButtonElement;
 
     let wasm: any;
@@ -55,6 +57,14 @@ export async function setupLogic() {
                 controls.classList.add('active');
                 downloadBtn.disabled = false;
                 dropZone.querySelector('div:last-child')!.textContent = file.name;
+                
+                // Set default center radius to 5% of field's equivalent radius
+                const area = polyArea(originalPolygon!.exterior);
+                const eqRadius = Math.sqrt(area / Math.PI);
+                centerSlider.max = (eqRadius * 0.2).toFixed(1);
+                centerSlider.step = (eqRadius * 0.005).toFixed(2);
+                centerSlider.value = (eqRadius * 0.05).toFixed(2);
+
                 try {
                     updateSlices();
                 } catch (e: any) {
@@ -70,6 +80,7 @@ export async function setupLogic() {
         valPhase.innerText = phaseSlider.value;
         valAxis.innerText = axisSlider.value + '°';
         valSnap.innerText = snapSlider.value;
+        valCenter.innerText = centerSlider.value + ' m';
         if (!originalPolygon || !wasm) return;
         
         try {
@@ -78,7 +89,8 @@ export async function setupLogic() {
                 k_slices: parseInt(kSlider.value),
                 pizza_phase: parseFloat(phaseSlider.value),
                 axis_rotation: parseFloat(axisSlider.value),
-                snap_tolerance: parseFloat(snapSlider.value)
+                snap_tolerance: parseFloat(snapSlider.value),
+                center_radius: parseFloat(centerSlider.value)
             };
             slicedPolygons = wasm.execute_slicing(originalPolygon, params);
             currentN = params.n_subfields;
@@ -94,6 +106,7 @@ export async function setupLogic() {
     phaseSlider.addEventListener('input', updateSlices);
     axisSlider.addEventListener('input', updateSlices);
     snapSlider.addEventListener('input', updateSlices);
+    centerSlider.addEventListener('input', updateSlices);
 
     downloadBtn.addEventListener('click', () => {
         if (!wasm || slicedPolygons.length === 0) return;
@@ -227,7 +240,7 @@ function draw(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement) {
         
         // Draw the grid overlay
         const gridW = bestA * 60 + 12;
-        const gridH = bestB * 24 + 32;
+        const gridH = bestB * 24 + 52;
         const gx = canvas.width - gridW - 12;
         const gy = canvas.height - gridH - 12;
         
@@ -255,6 +268,13 @@ function draw(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement) {
                 }
             }
         }
+
+        // Total area
+        const totalSum = subfieldAreas.reduce((a, b) => a + b, 0);
+        ctx.font = 'bold 10px Outfit, sans-serif';
+        ctx.fillStyle = 'rgba(148, 163, 184, 0.9)';
+        ctx.textAlign = 'left';
+        ctx.fillText('Total: ' + formatArea(totalSum), gx + 8, gy + gridH - 14);
     }
 }
 

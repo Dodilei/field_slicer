@@ -13,6 +13,7 @@ pub struct SlicerParams {
     pub pizza_phase: f64,
     pub axis_rotation: f64,
     pub snap_tolerance: f64,
+    pub center_radius: f64,
 }
 
 #[wasm_bindgen]
@@ -22,7 +23,7 @@ pub fn execute_slicing(polygon_js: JsValue, params_js: JsValue) -> Result<JsValu
     let params: SlicerParams = serde_wasm_bindgen::from_value(params_js)
         .map_err(|e| JsValue::from_str(&e.to_string()))?;
         
-    let result = slicing::slice(&polygon, params.n_subfields, params.k_slices, params.pizza_phase, params.axis_rotation, params.snap_tolerance)
+    let result = slicing::slice(&polygon, params.n_subfields, params.k_slices, params.pizza_phase, params.axis_rotation, params.snap_tolerance, params.center_radius)
         .map_err(|e| JsValue::from_str(&e))?;
         
     to_value(&result).map_err(|e| JsValue::from_str(&e.to_string()))

@@ -41,6 +41,12 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
         <span class="val-display" id="val-snap">1.0</span>
       </div>
       <input type="range" id="snap-slider" min="0" max="10" step="0.1" value="1" />
+
+      <div class="control-header">
+        <span>Center Radius (m)</span>
+        <span class="val-display" id="val-center">0.0</span>
+      </div>
+      <input type="range" id="center-slider" min="0" max="100" step="1" value="0" />
     </div>
 
     <button class="primary" id="download-btn" disabled>Export Output DXF</button>

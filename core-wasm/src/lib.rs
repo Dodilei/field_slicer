@@ -3,7 +3,7 @@ pub mod dxf_util;
 pub mod slicing;
 
 use wasm_bindgen::prelude::*;
-use serde::{Serialize, Deserialize};
+use serde::Deserialize;
 use serde_wasm_bindgen::to_value;
 
 #[derive(Deserialize)]
@@ -11,6 +11,8 @@ pub struct SlicerParams {
     pub n_subfields: usize,
     pub k_slices: usize,
     pub pizza_phase: f64,
+    pub axis_rotation: f64,
+    pub snap_tolerance: f64,
 }
 
 #[wasm_bindgen]
@@ -20,7 +22,7 @@ pub fn execute_slicing(polygon_js: JsValue, params_js: JsValue) -> Result<JsValu
     let params: SlicerParams = serde_wasm_bindgen::from_value(params_js)
         .map_err(|e| JsValue::from_str(&e.to_string()))?;
         
-    let result = slicing::slice(&polygon, params.n_subfields, params.k_slices, params.pizza_phase)
+    let result = slicing::slice(&polygon, params.n_subfields, params.k_slices, params.pizza_phase, params.axis_rotation, params.snap_tolerance)
         .map_err(|e| JsValue::from_str(&e))?;
         
     to_value(&result).map_err(|e| JsValue::from_str(&e.to_string()))

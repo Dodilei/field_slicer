@@ -25,10 +25,22 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
       <input type="range" id="k-slider" min="1" max="16" step="1" value="4" />
 
       <div class="control-header">
+        <span>Axis Rotation (°)</span>
+        <span class="val-display" id="val-axis">0</span>
+      </div>
+      <input type="range" id="axis-slider" min="0" max="180" step="1" value="0" />
+
+      <div class="control-header">
         <span>Phase Alignment</span>
         <span class="val-display" id="val-phase">0.0</span>
       </div>
       <input type="range" id="phase-slider" min="0" max="1" step="0.05" value="0" />
+
+      <div class="control-header">
+        <span>Snap Tolerance</span>
+        <span class="val-display" id="val-snap">1.0</span>
+      </div>
+      <input type="range" id="snap-slider" min="0" max="10" step="0.1" value="1" />
     </div>
 
     <button class="primary" id="download-btn" disabled>Export Output DXF</button>

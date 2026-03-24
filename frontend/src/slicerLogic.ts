@@ -13,9 +13,13 @@ export async function setupLogic() {
     const nSlider = document.getElementById('n-slider') as HTMLInputElement;
     const kSlider = document.getElementById('k-slider') as HTMLInputElement;
     const phaseSlider = document.getElementById('phase-slider') as HTMLInputElement;
+    const axisSlider = document.getElementById('axis-slider') as HTMLInputElement;
+    const snapSlider = document.getElementById('snap-slider') as HTMLInputElement;
     const valN = document.getElementById('val-n')!;
     const valK = document.getElementById('val-k')!;
     const valPhase = document.getElementById('val-phase')!;
+    const valAxis = document.getElementById('val-axis')!;
+    const valSnap = document.getElementById('val-snap')!;
     const downloadBtn = document.getElementById('download-btn') as HTMLButtonElement;
 
     let wasm: any;
@@ -43,29 +47,38 @@ export async function setupLogic() {
             if (wasm) {
                 try {
                     originalPolygon = wasm.parse_dxf_boundary(bytes);
-                    controls.classList.add('active');
-                    downloadBtn.disabled = false;
-                    dropZone.querySelector('div:last-child')!.textContent = file.name;
-                    updateSlices();
                 } catch (e: any) {
                     alert('Failed to parse DXF Boundary. Is it a closed LwPolyline?');
                     console.error(e);
+                    return;
+                }
+                controls.classList.add('active');
+                downloadBtn.disabled = false;
+                dropZone.querySelector('div:last-child')!.textContent = file.name;
+                try {
+                    updateSlices();
+                } catch (e: any) {
+                    console.error('Initial slicing failed:', e);
                 }
             }
         }
     });
 
     const updateSlices = async () => {
-        if (!originalPolygon || !wasm) return;
         valN.innerText = nSlider.value;
         valK.innerText = kSlider.value;
         valPhase.innerText = phaseSlider.value;
+        valAxis.innerText = axisSlider.value + '°';
+        valSnap.innerText = snapSlider.value;
+        if (!originalPolygon || !wasm) return;
         
         try {
             const params = {
                 n_subfields: parseInt(nSlider.value),
                 k_slices: parseInt(kSlider.value),
-                pizza_phase: parseFloat(phaseSlider.value)
+                pizza_phase: parseFloat(phaseSlider.value),
+                axis_rotation: parseFloat(axisSlider.value),
+                snap_tolerance: parseFloat(snapSlider.value)
             };
             slicedPolygons = wasm.execute_slicing(originalPolygon, params);
             draw(ctx, canvas);
@@ -77,6 +90,8 @@ export async function setupLogic() {
     nSlider.addEventListener('input', updateSlices);
     kSlider.addEventListener('input', updateSlices);
     phaseSlider.addEventListener('input', updateSlices);
+    axisSlider.addEventListener('input', updateSlices);
+    snapSlider.addEventListener('input', updateSlices);
 
     downloadBtn.addEventListener('click', () => {
         if (!wasm || slicedPolygons.length === 0) return;
@@ -141,7 +156,7 @@ function draw(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement) {
             ctx.closePath();
             
             const hue = (i * 137.5) % 360;
-            ctx.fillStyle = \`hsla(\${hue}, 70%, 50%, 0.3)\`;
+            ctx.fillStyle = `hsla(${hue}, 70%, 50%, 0.3)`;
             ctx.fill();
             
             ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';

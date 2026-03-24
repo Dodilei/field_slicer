@@ -1,6 +1,7 @@
 # Rust
 /core-wasm/target/
 **/*.rs.bk
+Cargo.lock
 
 # Node.js
 **/node_modules/
@@ -9,6 +10,7 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
+package-lock.json
 
 # wasm-pack build output
 **/pkg/
@@ -23,3 +25,6 @@ Thumbs.db
 
 # User data
 .data/*
+
+# Agent data
+err.txt

@@ -81,6 +81,8 @@ export async function setupLogic() {
                 snap_tolerance: parseFloat(snapSlider.value)
             };
             slicedPolygons = wasm.execute_slicing(originalPolygon, params);
+            currentN = params.n_subfields;
+            currentK = params.k_slices;
             draw(ctx, canvas);
         } catch (e) {
             console.error(e);
@@ -109,6 +111,9 @@ export async function setupLogic() {
         }
     });
 }
+
+let currentN = 2;
+let currentK = 4;
 
 function draw(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement) {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -162,6 +167,17 @@ function draw(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement) {
             ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
             ctx.lineWidth = 1;
             ctx.stroke();
+
+            // Draw area label inside each radial slice
+            const area = polyArea(poly.exterior);
+            const centroid = polyCentroid(poly.exterior);
+            const sc = toScreen(centroid.x, centroid.y);
+            const areaText = formatArea(area);
+            ctx.font = '10px Outfit, sans-serif';
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(areaText, sc.x, sc.y);
         });
     }
 
@@ -177,4 +193,106 @@ function draw(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement) {
         ctx.lineWidth = 2;
         ctx.stroke();
     }
+
+    // Draw subfield area summary grid in the bottom-right corner
+    if (slicedPolygons.length > 0 && currentK >= 1 && currentN >= 1) {
+        const n = currentN;
+        const k = currentK;
+        
+        // Compute grid dimensions A x B (same logic as Rust)
+        const totalArea = polyArea(originalPolygon!.exterior);
+        const ar = w > 0.0001 && h > 0.0001 ? w / h : 1;
+        let bestA = 1, bestB = n;
+        let minDiff = Infinity;
+        for (let a = 1; a <= n; a++) {
+            if (n % a === 0) {
+                const b = n / a;
+                const diff = Math.abs(a / b - ar);
+                if (diff < minDiff) { minDiff = diff; bestA = a; bestB = b; }
+            }
+        }
+        
+        // Group slices into subfields (every k consecutive slices = 1 subfield)
+        const subfieldAreas: number[] = [];
+        for (let s = 0; s < n; s++) {
+            let sfArea = 0;
+            for (let r = 0; r < k; r++) {
+                const idx = s * k + r;
+                if (idx < slicedPolygons.length) {
+                    sfArea += polyArea(slicedPolygons[idx].exterior);
+                }
+            }
+            subfieldAreas.push(sfArea);
+        }
+        
+        // Draw the grid overlay
+        const gridW = bestA * 60 + 12;
+        const gridH = bestB * 24 + 32;
+        const gx = canvas.width - gridW - 12;
+        const gy = canvas.height - gridH - 12;
+        
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
+        ctx.lineWidth = 1;
+        roundRect(ctx, gx, gy, gridW, gridH, 8);
+        
+        ctx.font = 'bold 10px Outfit, sans-serif';
+        ctx.fillStyle = 'rgba(148, 163, 184, 0.9)';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'top';
+        ctx.fillText('Subfield Areas', gx + 8, gy + 6);
+        
+        ctx.font = '11px Outfit, sans-serif';
+        ctx.textAlign = 'center';
+        for (let col = 0; col < bestA; col++) {
+            for (let row = 0; row < bestB; row++) {
+                const idx = col * bestB + row;
+                if (idx < subfieldAreas.length) {
+                    const cellX = gx + 8 + col * 60 + 30;
+                    const cellY = gy + 22 + row * 24 + 12;
+                    ctx.fillStyle = `hsla(${(idx * 137.5) % 360}, 70%, 70%, 0.9)`;
+                    ctx.fillText(formatArea(subfieldAreas[idx]), cellX, cellY);
+                }
+            }
+        }
+    }
+}
+
+function polyArea(pts: Point[]): number {
+    let area = 0;
+    const n = pts.length;
+    for (let i = 0; i < n; i++) {
+        const j = (i + 1) % n;
+        area += pts[i].x * pts[j].y;
+        area -= pts[j].x * pts[i].y;
+    }
+    return Math.abs(area) / 2;
+}
+
+function polyCentroid(pts: Point[]): Point {
+    let cx = 0, cy = 0;
+    for (const p of pts) { cx += p.x; cy += p.y; }
+    const n = pts.length || 1;
+    return { x: cx / n, y: cy / n };
+}
+
+function formatArea(area: number): string {
+    if (area >= 10000) return (area / 10000).toPrecision(3) + ' ha';
+    return area.toPrecision(3) + ' m²';
+}
+
+function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    ctx.lineTo(x + r, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+    ctx.lineTo(x, y + r);
+    ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
 }

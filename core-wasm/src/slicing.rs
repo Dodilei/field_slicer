@@ -46,7 +46,7 @@ fn grid_slice(poly: &Polygon<f64>, n: usize, axis_rotation_deg: f64) -> Vec<Poly
     
     let dx = best_pair.1.x - best_pair.0.x;
     let dy = best_pair.1.y - best_pair.0.y;
-    let theta = dy.atan2(dx) + axis_rotation_deg * PI / 180.0;
+    let theta = dy.atan2(dx) + 0.25 * PI + axis_rotation_deg * PI / 180.0;
     
     let rot_poly = rotate_polygon(poly, -theta);
     

@@ -34,7 +34,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
         <span>Phase Alignment</span>
         <span class="val-display" id="val-phase">0.0</span>
       </div>
-      <input type="range" id="phase-slider" min="0" max="1" step="0.05" value="0" />
+      <input type="range" id="phase-slider" min="0" max="1" step="0.01" value="0" />
 
       <div class="control-header">
         <span>Snap Tolerance</span>

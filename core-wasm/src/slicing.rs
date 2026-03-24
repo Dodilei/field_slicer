@@ -25,6 +25,18 @@ pub fn slice(
 
 // ─── Grid Slicing (unchanged) ──────────────────────────────────────────
 
+fn is_prime(num: usize) -> bool {
+    if num <= 1 { return false; }
+    if num <= 3 { return true; }
+    if num % 2 == 0 || num % 3 == 0 { return false; }
+    let mut i = 5;
+    while i * i <= num {
+        if num % i == 0 || num % (i + 2) == 0 { return false; }
+        i += 6;
+    }
+    true
+}
+
 fn grid_slice(poly: &Polygon<f64>, n: usize, axis_rotation_deg: f64) -> Vec<Polygon<f64>> {
     if n <= 1 {
         return vec![poly.clone()];
@@ -58,19 +70,26 @@ fn grid_slice(poly: &Polygon<f64>, n: usize, axis_rotation_deg: f64) -> Vec<Poly
     
     let mut best_a = 1;
     let mut best_b = n;
-    let mut min_ar_diff = f64::MAX;
-    for a in 1..=n {
-        if n % a == 0 {
-            let b = n / a;
-            let current_ar = a as f64 / b as f64;
-            let diff = (current_ar - ar).abs();
-            if diff < min_ar_diff {
-                min_ar_diff = diff;
-                best_a = a;
-                best_b = b;
+    
+    if is_prime(n) {
+        best_a = n;
+        best_b = 1;
+    } else {
+        let mut min_ar_diff = f64::MAX;
+        for a in 1..=n {
+            if n % a == 0 {
+                let b = n / a;
+                let current_ar = a as f64 / b as f64;
+                let diff = (current_ar - ar).abs();
+                if diff < min_ar_diff {
+                    min_ar_diff = diff;
+                    best_a = a;
+                    best_b = b;
+                }
             }
         }
     }
+    
     let a = best_a;
     let b = best_b;
     

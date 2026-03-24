@@ -14,9 +14,9 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
     <div class="control-group" id="controls">
       <div class="control-header">
         <span>Subfields (N)</span>
-        <span class="val-display" id="val-n">2</span>
+        <span class="val-display" id="val-n">1</span>
       </div>
-      <input type="range" id="n-slider" min="2" max="32" step="2" value="2" />
+      <input type="range" id="n-slider" min="1" max="32" step="1" value="1" />
 
       <div class="control-header">
         <span>Radial Slices (K)</span>
@@ -37,10 +37,10 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
       <input type="range" id="phase-slider" min="0" max="1" step="0.01" value="0" />
 
       <div class="control-header">
-        <span>Snap Tolerance</span>
-        <span class="val-display" id="val-snap">1.0</span>
+        <span>Snap Tolerance (%)</span>
+        <span class="val-display" id="val-snap">5.0%</span>
       </div>
-      <input type="range" id="snap-slider" min="0" max="10" step="0.1" value="1" />
+      <input type="range" id="snap-slider" min="0" max="20" step="0.5" value="5" />
 
       <div class="control-header">
         <span>Center Radius (m)</span>

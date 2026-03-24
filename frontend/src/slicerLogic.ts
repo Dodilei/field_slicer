@@ -58,12 +58,12 @@ export async function setupLogic() {
                 downloadBtn.disabled = false;
                 dropZone.querySelector('div:last-child')!.textContent = file.name;
                 
-                // Set default center radius to 5% of field's equivalent radius
+                // Set default center radius to 5% of subfield's equivalent radius
                 const area = polyArea(originalPolygon!.exterior);
-                const eqRadius = Math.sqrt(area / Math.PI);
-                centerSlider.max = (eqRadius * 0.2).toFixed(1);
-                centerSlider.step = (eqRadius * 0.005).toFixed(2);
-                centerSlider.value = (eqRadius * 0.05).toFixed(2);
+                const subfieldEqRadius = Math.sqrt((area / parseInt(nSlider.value)) / Math.PI);
+                centerSlider.max = (subfieldEqRadius * 0.2).toFixed(2);
+                centerSlider.step = (subfieldEqRadius * 0.005).toFixed(3);
+                centerSlider.value = (subfieldEqRadius * 0.05).toFixed(2);
 
                 try {
                     updateSlices();
@@ -79,9 +79,15 @@ export async function setupLogic() {
         valK.innerText = kSlider.value;
         valPhase.innerText = phaseSlider.value;
         valAxis.innerText = axisSlider.value + '°';
-        valSnap.innerText = snapSlider.value;
+        valSnap.innerText = snapSlider.value + '%';
         valCenter.innerText = centerSlider.value + ' m';
         if (!originalPolygon || !wasm) return;
+        
+        const area = polyArea(originalPolygon.exterior);
+        const subfieldEqRadius = Math.sqrt((area / parseInt(nSlider.value)) / Math.PI);
+        
+        centerSlider.max = (subfieldEqRadius * 0.2).toFixed(2);
+        centerSlider.step = (subfieldEqRadius * 0.005).toFixed(3);
         
         try {
             const params = {
@@ -89,7 +95,7 @@ export async function setupLogic() {
                 k_slices: parseInt(kSlider.value),
                 pizza_phase: parseFloat(phaseSlider.value),
                 axis_rotation: parseFloat(axisSlider.value),
-                snap_tolerance: parseFloat(snapSlider.value),
+                snap_tolerance: (parseFloat(snapSlider.value) / 100.0) * subfieldEqRadius,
                 center_radius: parseFloat(centerSlider.value)
             };
             slicedPolygons = wasm.execute_slicing(originalPolygon, params);
@@ -145,17 +151,19 @@ function draw(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement) {
     });
 
     const padding = 50;
+    const sidePanelW = 240;
+    const drawAreaW = canvas.width - sidePanelW; // Reserve space for right panel
     const w = maxX - minX;
     const h = maxY - minY;
     
     const scale = Math.min(
-        (canvas.width - padding * 2) / (w || 1),
+        (drawAreaW - padding * 2) / (w || 1),
         (canvas.height - padding * 2) / (h || 1)
     );
     
     const cx = (minX + maxX) / 2;
     const cy = (minY + maxY) / 2;
-    const screenCx = canvas.width / 2;
+    const screenCx = drawAreaW / 2;
     const screenCy = canvas.height / 2;
 
     const toScreen = (x: number, y: number) => ({
@@ -212,69 +220,154 @@ function draw(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement) {
         const n = currentN;
         const k = currentK;
         
-        // Compute grid dimensions A x B (same logic as Rust)
-        const totalArea = polyArea(originalPolygon!.exterior);
-        const ar = w > 0.0001 && h > 0.0001 ? w / h : 1;
-        let bestA = 1, bestB = n;
-        let minDiff = Infinity;
-        for (let a = 1; a <= n; a++) {
-            if (n % a === 0) {
-                const b = n / a;
-                const diff = Math.abs(a / b - ar);
-                if (diff < minDiff) { minDiff = diff; bestA = a; bestB = b; }
-            }
-        }
-        
         // Group slices into subfields (every k consecutive slices = 1 subfield)
         const subfieldAreas: number[] = [];
+        const sliceAreas: number[] = [];
         for (let s = 0; s < n; s++) {
             let sfArea = 0;
             for (let r = 0; r < k; r++) {
                 const idx = s * k + r;
                 if (idx < slicedPolygons.length) {
-                    sfArea += polyArea(slicedPolygons[idx].exterior);
+                    const a = polyArea(slicedPolygons[idx].exterior);
+                    sfArea += a;
+                    sliceAreas.push(a);
                 }
             }
             subfieldAreas.push(sfArea);
         }
         
-        // Draw the grid overlay
-        const gridW = bestA * 60 + 12;
-        const gridH = bestB * 24 + 52;
-        const gx = canvas.width - gridW - 12;
-        const gy = canvas.height - gridH - 12;
+        // Calculate metrics
+        let maxDeviationStr = "0.0%";
+        let devColor = '#22c55e';
+        if (sliceAreas.length > 0) {
+            const meanArea = sliceAreas.reduce((a, b) => a + b, 0) / sliceAreas.length;
+            let maxDev = 0;
+            for (const a of sliceAreas) {
+                const dev = Math.abs(a - meanArea) / meanArea * 100;
+                if (dev > maxDev) maxDev = dev;
+            }
+            maxDeviationStr = maxDev.toFixed(2) + '%';
+            if (maxDev > 5.0) devColor = '#ef4444';
+            else if (maxDev > 1.0) devColor = '#eab308';
+            else devColor = '#22c55e';
+        }
+
+        const totalSum = subfieldAreas.reduce((a, b) => a + b, 0);
+
+        // Glitch Checking
+        const originalArea = polyArea(originalPolygon!.exterior);
+        let totalVoidArea = 0;
+        const centerRadiusStr = (document.getElementById('center-slider') as HTMLInputElement).value;
+        const centerRadius = parseFloat(centerRadiusStr);
+        if (centerRadius > 0 && k > 2) {
+            const voidAreaPerSubfield = (k / 2) * Math.pow(centerRadius, 2) * Math.sin((2 * Math.PI) / k);
+            totalVoidArea = voidAreaPerSubfield * n;
+        }
         
-        ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
-        ctx.lineWidth = 1;
-        roundRect(ctx, gx, gy, gridW, gridH, 8);
+        const theoreticalTotal = originalArea - totalVoidArea;
+        const deviationPct = Math.abs(totalSum - theoreticalTotal) / theoreticalTotal * 100;
         
+        let glitchWarning = null;
+        if (deviationPct > 0.5) {
+            if (totalSum > theoreticalTotal) {
+                glitchWarning = `⚠️ WARNING: Slices Overlap (Area Exceeds Match by ${deviationPct.toFixed(1)}%)`;
+            } else {
+                glitchWarning = `⚠️ WARNING: Missing Area (Slices dropped ${deviationPct.toFixed(1)}%)`;
+            }
+        }
+
+        // Layout max 3 columns
+        let cols = 3;
+        if (n === 1) cols = 1;
+        else if (n === 2 || n === 4) cols = 2;
+        
+        const rows = Math.ceil(n / cols);
+        
+        // Dimensions
+        const boxW = Math.max(140, cols * 66 + 16);
+        const gridH = rows * 24 + 28;
+        
+        // Stack layout
+        const spacing = 12;
+        const totalH = 46;
+        const devH = 44;
+        const stackHeight = totalH + spacing + devH + spacing + gridH;
+        
+        // Center the whole stack vertically on the right side
+        const sidePanelW = 240;
+        const startY = (canvas.height - stackHeight) / 2;
+        const totalY = startY;
+        const devY = totalY + totalH + spacing;
+        const gy = devY + devH + spacing;
+        
+        // Center horizontally in the side panel area
+        const gx = canvas.width - sidePanelW + (sidePanelW - boxW) / 2;
+        
+        const drawPanel = (y: number, h: number) => {
+            ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
+            ctx.lineWidth = 1;
+            roundRect(ctx, gx, y, boxW, h, 8);
+        };
+        
+        // 1. Total Area Box
+        drawPanel(totalY, totalH);
         ctx.font = 'bold 10px Outfit, sans-serif';
         ctx.fillStyle = 'rgba(148, 163, 184, 0.9)';
         ctx.textAlign = 'left';
         ctx.textBaseline = 'top';
-        ctx.fillText('Subfield Areas', gx + 8, gy + 6);
+        ctx.fillText('Total Area', gx + 10, totalY + 8);
+        ctx.font = 'bold 16px Outfit, sans-serif';
+        ctx.fillStyle = '#f8fafc';
+        ctx.fillText(formatArea(totalSum), gx + 10, totalY + 22);
+        
+        // 2. Max Deviation Box
+        drawPanel(devY, devH);
+        ctx.font = 'bold 10px Outfit, sans-serif';
+        ctx.fillStyle = 'rgba(148, 163, 184, 0.9)';
+        ctx.fillText('Max Deviation', gx + 10, devY + 8);
+        ctx.font = 'bold 13px Outfit, sans-serif';
+        ctx.fillStyle = devColor;
+        ctx.fillText(maxDeviationStr, gx + 10, devY + 22);
+        
+        // 3. Subfield Areas Box
+        drawPanel(gy, gridH);
+        ctx.font = 'bold 10px Outfit, sans-serif';
+        ctx.fillStyle = 'rgba(148, 163, 184, 0.9)';
+        ctx.fillText('Subfield Areas', gx + 10, gy + 8);
         
         ctx.font = '11px Outfit, sans-serif';
         ctx.textAlign = 'center';
-        for (let col = 0; col < bestA; col++) {
-            for (let row = 0; row < bestB; row++) {
-                const idx = col * bestB + row;
-                if (idx < subfieldAreas.length) {
-                    const cellX = gx + 8 + col * 60 + 30;
-                    const cellY = gy + 22 + row * 24 + 12;
-                    ctx.fillStyle = `hsla(${(idx * 137.5) % 360}, 70%, 70%, 0.9)`;
-                    ctx.fillText(formatArea(subfieldAreas[idx]), cellX, cellY);
-                }
-            }
+        const colW = (boxW - 16) / cols;
+        for (let idx = 0; idx < subfieldAreas.length; idx++) {
+            const col = Math.floor(idx % cols);
+            const row = Math.floor(idx / cols);
+            const cellX = gx + 8 + (col + 0.5) * colW;
+            const cellY = gy + 26 + row * 24;
+            ctx.fillStyle = `hsla(${(idx * 137.5) % 360}, 70%, 70%, 0.9)`;
+            ctx.fillText(formatArea(subfieldAreas[idx]), cellX, cellY);
         }
-
-        // Total area
-        const totalSum = subfieldAreas.reduce((a, b) => a + b, 0);
-        ctx.font = 'bold 10px Outfit, sans-serif';
-        ctx.fillStyle = 'rgba(148, 163, 184, 0.9)';
-        ctx.textAlign = 'left';
-        ctx.fillText('Total: ' + formatArea(totalSum), gx + 8, gy + gridH - 14);
+        
+        // Draw Glitch Warning Banner if necessary
+        if (glitchWarning) {
+            ctx.font = 'bold 14px Outfit, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'top';
+            
+            const textMetrics = ctx.measureText(glitchWarning);
+            const bgWidth = textMetrics.width + 32;
+            const bgHeight = 32;
+            const bgX = (drawAreaW - bgWidth) / 2;
+            const bgY = 16;
+            
+            ctx.fillStyle = 'rgba(220, 38, 38, 0.95)';
+            ctx.strokeStyle = 'rgba(255, 200, 200, 0.5)';
+            ctx.lineWidth = 1;
+            roundRect(ctx, bgX, bgY, bgWidth, bgHeight, 6);
+            
+            ctx.fillStyle = '#ffffff';
+            ctx.fillText(glitchWarning, drawAreaW / 2, bgY + 9);
+        }
     }
 }
 

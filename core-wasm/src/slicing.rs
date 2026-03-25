@@ -11,16 +11,22 @@ pub fn slice(
     axis_rotation_deg: f64,
     snap_tolerance: f64,
     center_radius: f64
-) -> Result<Vec<WasmPolygon>, String> {
+) -> Result<crate::SlicingResult, String> {
     let ext: Vec<Coord<f64>> = polygon.exterior.iter().map(|p| Coord { x: p.x, y: p.y }).collect();
-    if ext.is_empty() { return Ok(vec![]); }
+    if ext.is_empty() { 
+        return Ok(crate::SlicingResult { subfields: vec![], center_voids: vec![], radial_slices: vec![] }); 
+    }
     let geo_poly = Polygon::new(LineString::new(ext), vec![]);
     
     let subfields = grid_slice(&geo_poly, n_subfields, axis_rotation_deg);
     
-    let all_slices = radial_slice_with_snap(&subfields, k_slices, pizza_phase, snap_tolerance, center_radius);
+    let (all_slices, all_voids) = radial_slice_with_snap(&subfields, k_slices, pizza_phase, snap_tolerance, center_radius);
     
-    Ok(all_slices.into_iter().map(geo_to_wasm).collect())
+    Ok(crate::SlicingResult {
+        subfields: subfields.into_iter().map(geo_to_wasm).collect(),
+        center_voids: all_voids.into_iter().map(geo_to_wasm).collect(),
+        radial_slices: all_slices.into_iter().map(geo_to_wasm).collect()
+    })
 }
 
 // ─── Grid Slicing (unchanged) ──────────────────────────────────────────
@@ -218,9 +224,9 @@ fn radial_slice_with_snap(
     phase: f64,
     snap_tolerance: f64,
     center_radius: f64,
-) -> Vec<Polygon<f64>> {
+) -> (Vec<Polygon<f64>>, Vec<Polygon<f64>>) {
     if k <= 1 {
-        return subfields.to_vec();
+        return (subfields.to_vec(), vec![]);
     }
     
     let mut all_ray_angles: Vec<Vec<f64>> = Vec::new();
@@ -323,6 +329,7 @@ fn radial_slice_with_snap(
     
     // Step 3: Rebuild radial slices using the (possibly snapped) boundary points
     let mut result = Vec::new();
+    let mut center_polys = Vec::new();
     for (sf_idx, sf) in subfields.iter().enumerate() {
         let centroid = all_centroids[sf_idx];
         let angles = &all_ray_angles[sf_idx];
@@ -333,17 +340,26 @@ fn radial_slice_with_snap(
         let r = ((bbox.max().x - bbox.min().x).powi(2) + (bbox.max().y - bbox.min().y).powi(2)).sqrt() * 2.0;
         let use_void = center_radius > 0.0 && k > 1;
         
+        if use_void && k > 2 {
+            let mut void_coords = v_pts.clone();
+            void_coords.push(v_pts[0]);
+            center_polys.push(Polygon::new(LineString::from(void_coords), vec![]));
+        }
+        
         for slice_idx in 0..k {
             let angle_start = angles[slice_idx];
             let angle_end = if slice_idx + 1 < k { angles[slice_idx + 1] } else { angles[0] + 2.0 * PI };
             let end_idx = if slice_idx + 1 < k { slice_idx + 1 } else { 0 };
+            
+            let centroid_coord = Coord { x: centroid.x(), y: centroid.y() };
             
             let wedge = if use_void {
                 create_wedge_with_void(
                     centroid, r, 0.0,
                     angle_start, angle_end,
                     bnd_pts[slice_idx], bnd_pts[end_idx],
-                    v_pts[slice_idx], v_pts[end_idx],
+                    *v_pts.get(slice_idx).unwrap_or(&centroid_coord),
+                    *v_pts.get(end_idx).unwrap_or(&centroid_coord),
                 )
             } else {
                 create_wedge_with_endpoints(
@@ -360,7 +376,7 @@ fn radial_slice_with_snap(
         }
     }
     
-    result
+    (result, center_polys)
 }
 
 fn ray_boundary_intersection_from_point(start: Coord<f64>, theta: f64, r: f64, poly: &Polygon<f64>) -> Coord<f64> {

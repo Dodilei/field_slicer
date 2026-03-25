@@ -13,6 +13,7 @@
     "vite": "^5.2.0"
   },
   "dependencies": {
-    "core-wasm": "file:../core-wasm/pkg"
+    "core-wasm": "file:../core-wasm/pkg",
+    "jspdf": "^4.2.1"
   }
 }

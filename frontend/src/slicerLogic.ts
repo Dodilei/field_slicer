@@ -1,8 +1,15 @@
 interface Point { x: number, y: number }
 interface Polygon { exterior: Point[] }
+interface SlicingResult {
+    subfields: Polygon[];
+    center_voids: Polygon[];
+    radial_slices: Polygon[];
+}
 
 let originalPolygon: Polygon | null = null;
 let slicedPolygons: Polygon[] = [];
+let currentSubfields: Polygon[] = [];
+let currentCenterVoids: Polygon[] = [];
 
 export async function setupLogic() {
     const canvas = document.getElementById('canvas') as HTMLCanvasElement;
@@ -23,6 +30,7 @@ export async function setupLogic() {
     const valSnap = document.getElementById('val-snap')!;
     const valCenter = document.getElementById('val-center')!;
     const downloadBtn = document.getElementById('download-btn') as HTMLButtonElement;
+    const pdfBtn = document.getElementById('pdf-btn') as HTMLButtonElement;
 
     let wasm: any;
     try {
@@ -56,6 +64,7 @@ export async function setupLogic() {
                 }
                 controls.classList.add('active');
                 downloadBtn.disabled = false;
+                pdfBtn.disabled = false;
                 dropZone.querySelector('div:last-child')!.textContent = file.name;
                 
                 // Set default center radius to 5% of subfield's equivalent radius
@@ -98,7 +107,10 @@ export async function setupLogic() {
                 snap_tolerance: (parseFloat(snapSlider.value) / 100.0) * subfieldEqRadius,
                 center_radius: parseFloat(centerSlider.value)
             };
-            slicedPolygons = wasm.execute_slicing(originalPolygon, params);
+            const result: SlicingResult = wasm.execute_slicing(originalPolygon, params);
+            slicedPolygons = result.radial_slices;
+            currentSubfields = result.subfields;
+            currentCenterVoids = result.center_voids;
             currentN = params.n_subfields;
             currentK = params.k_slices;
             draw(ctx, canvas);
@@ -128,6 +140,11 @@ export async function setupLogic() {
         } catch (e) {
             console.error(e);
         }
+    });
+
+    pdfBtn.addEventListener('click', () => {
+        if (!originalPolygon || slicedPolygons.length === 0) return;
+        generatePDF(originalPolygon, currentSubfields, currentCenterVoids, slicedPolygons, currentN, currentK);
     });
 }
 
@@ -408,4 +425,391 @@ function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: numbe
     ctx.closePath();
     ctx.fill();
     ctx.stroke();
+}
+
+// ─── PDF Export ─────────────────────────────────────────────────────────
+
+function dist(a: Point, b: Point): number {
+    return Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2);
+}
+
+function angleBetween(a: Point, b: Point, c: Point): number {
+    const v1 = { x: a.x - b.x, y: a.y - b.y };
+    const v2 = { x: c.x - b.x, y: c.y - b.y };
+    const dot = v1.x * v2.x + v1.y * v2.y;
+    const m1 = Math.sqrt(v1.x ** 2 + v1.y ** 2);
+    const m2 = Math.sqrt(v2.x ** 2 + v2.y ** 2);
+    if (m1 < 1e-12 || m2 < 1e-12) return Math.PI;
+    const cos = Math.max(-1, Math.min(1, dot / (m1 * m2)));
+    return Math.acos(cos);
+}
+
+function pointOnSegment(p: Point, a: Point, b: Point, tol: number): boolean {
+    const ab = dist(a, b);
+    const ap = dist(a, p);
+    const pb = dist(p, b);
+    return Math.abs(ap + pb - ab) < tol;
+}
+
+function getEffectiveVertices(pts: Point[]): Point[] {
+    // Strip duplicate closing point if present
+    let ring = pts;
+    if (ring.length > 1 && dist(ring[0], ring[ring.length - 1]) < 1e-6) {
+        ring = ring.slice(0, -1);
+    }
+    const n = ring.length;
+    if (n < 3) return [...ring];
+    const result: Point[] = [];
+    for (let i = 0; i < n; i++) {
+        const prev = ring[(i - 1 + n) % n];
+        const curr = ring[i];
+        const next = ring[(i + 1) % n];
+        const angle = angleBetween(prev, curr, next);
+        // Cross product determines convex vs reflex
+        const cross = (curr.x - prev.x) * (next.y - curr.y) - (curr.y - prev.y) * (next.x - curr.x);
+        // If reflex (concave vertex), always include it
+        // If convex, include only if angle < 150°
+        if (cross < 0 || angle < (150 * Math.PI / 180)) {
+            result.push(curr);
+        }
+    }
+    return result;
+}
+
+function findDivisionEndpoints(boundary: Point[], innerPolygons: Point[][], tol: number): Point[] {
+    const pts: Point[] = [];
+    for (const inner of innerPolygons) {
+        for (const v of inner) {
+            for (let i = 0; i < boundary.length; i++) {
+                const a = boundary[i];
+                const b = boundary[(i + 1) % boundary.length];
+                if (pointOnSegment(v, a, b, tol)) {
+                    let isDuplicate = false;
+                    for (const ep of pts) {
+                        if (dist(ep, v) < tol) { isDuplicate = true; break; }
+                    }
+                    if (!isDuplicate) {
+                        // Check it's not just a boundary vertex
+                        let isBoundaryVertex = false;
+                        for (const bv of boundary) {
+                            if (dist(bv, v) < tol) { isBoundaryVertex = true; break; }
+                        }
+                        if (!isBoundaryVertex) {
+                            pts.push(v);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return pts;
+}
+
+function orderPointsAlongBoundary(boundary: Point[], points: Point[], tol: number): Point[] {
+    // For each point, find the parametric position along the boundary
+    const withParam: { pt: Point, t: number }[] = [];
+    const segLens: number[] = [];
+    for (let i = 0; i < boundary.length; i++) {
+        segLens.push(dist(boundary[i], boundary[(i + 1) % boundary.length]));
+    }
+    
+    for (const p of points) {
+        let bestT = 0;
+        let bestDist = Infinity;
+        let runningLen = 0;
+        for (let i = 0; i < boundary.length; i++) {
+            const a = boundary[i];
+            const b = boundary[(i + 1) % boundary.length];
+            if (pointOnSegment(p, a, b, tol)) {
+                const t = runningLen + dist(a, p);
+                const d = Math.min(dist(p, a), dist(p, b));
+                if (d < bestDist || (Math.abs(d - bestDist) < tol && t < bestT)) {
+                    bestT = t;
+                    bestDist = d;
+                }
+            }
+            runningLen += segLens[i];
+        }
+        withParam.push({ pt: p, t: bestT });
+    }
+    
+    withParam.sort((a, b) => a.t - b.t);
+    return withParam.map(wp => wp.pt);
+}
+
+function getAnnotationPoints(boundary: Point[], innerPolygons: Point[][]): Point[] {
+    const tol = 0.01;
+    const effectiveVerts = getEffectiveVertices(boundary);
+    const divEndpoints = findDivisionEndpoints(boundary, innerPolygons, tol);
+    const allPoints = [...effectiveVerts, ...divEndpoints];
+    
+    // Deduplicate
+    const deduped: Point[] = [];
+    for (const p of allPoints) {
+        let isDup = false;
+        for (const q of deduped) {
+            if (dist(p, q) < tol) { isDup = true; break; }
+        }
+        if (!isDup) deduped.push(p);
+    }
+    
+    return orderPointsAlongBoundary(boundary, deduped, tol);
+}
+
+async function generatePDF(
+    field: Polygon,
+    subfields: Polygon[],
+    centerVoids: Polygon[],
+    radialSlices: Polygon[],
+    n: number,
+    k: number,
+) {
+    const { jsPDF } = await import('jspdf');
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+    const pageW = doc.internal.pageSize.getWidth();
+    const pageH = doc.internal.pageSize.getHeight();
+    const margin = 15;
+    const drawW = pageW - margin * 2;
+    const drawH = pageH - margin * 2 - 15; // reserve 15mm for title
+
+    const colors = [
+        '#3b82f6', '#ef4444', '#22c55e', '#f59e0b', '#8b5cf6',
+        '#06b6d4', '#ec4899', '#14b8a6', '#f97316', '#6366f1',
+    ];
+
+    const drawPolyOnPage = (
+        doc: InstanceType<typeof jsPDF>,
+        polys: Polygon[],
+        boundary: Polygon | null,
+        title: string,
+        annotationInnerPolys: Point[][],
+        annotationBoundary: Point[],
+        fillColors?: string[],
+        voids?: Polygon[],
+        polyNumbers?: number[],
+    ) => {
+        // Title
+        doc.setFontSize(14);
+        doc.setFont('helvetica', 'bold');
+        doc.text(title, pageW / 2, margin + 4, { align: 'center' });
+
+        // Find bounding box
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        const allPts = boundary ? boundary.exterior : polys.flatMap(p => p.exterior);
+        for (const p of allPts) {
+            if (p.x < minX) minX = p.x;
+            if (p.x > maxX) maxX = p.x;
+            if (p.y < minY) minY = p.y;
+            if (p.y > maxY) maxY = p.y;
+        }
+
+        const geoW = maxX - minX || 1;
+        const geoH = maxY - minY || 1;
+        const scale = Math.min(drawW / geoW, drawH / geoH) * 0.8;
+        const cx = (minX + maxX) / 2;
+        const cy = (minY + maxY) / 2;
+        const screenCx = pageW / 2;
+        const screenCy = margin + 15 + drawH / 2;
+
+        const toPage = (x: number, y: number) => ({
+            x: (x - cx) * scale + screenCx,
+            y: -(y - cy) * scale + screenCy,
+        });
+
+        // Draw filled polygons
+        polys.forEach((poly, i) => {
+            const color = fillColors ? fillColors[i % fillColors.length] : colors[i % colors.length];
+            const r = parseInt(color.slice(1, 3), 16);
+            const g = parseInt(color.slice(3, 5), 16);
+            const b = parseInt(color.slice(5, 7), 16);
+
+            doc.setFillColor(r, g, b);
+            doc.setDrawColor(80, 80, 80);
+            doc.setLineWidth(0.3);
+
+            const points: number[][] = [];
+            for (const p of poly.exterior) {
+                const sp = toPage(p.x, p.y);
+                points.push([sp.x, sp.y]);
+            }
+            if (points.length > 2) {
+                const deltas = [];
+                for (let j = 1; j < points.length; j++) {
+                    deltas.push([points[j][0] - points[j-1][0], points[j][1] - points[j-1][1]]);
+                }
+                doc.lines(deltas, points[0][0], points[0][1], [1, 1], 'FD', true);
+            }
+        });
+
+        // Draw center voids (white filled)
+        if (voids) {
+            for (const v of voids) {
+                doc.setFillColor(255, 255, 255);
+                doc.setDrawColor(120, 120, 120);
+                doc.setLineWidth(0.2);
+                const points: number[][] = [];
+                for (const p of v.exterior) {
+                    const sp = toPage(p.x, p.y);
+                    points.push([sp.x, sp.y]);
+                }
+                if (points.length > 2) {
+                    const deltas = [];
+                    for (let j = 1; j < points.length; j++) {
+                        deltas.push([points[j][0] - points[j-1][0], points[j][1] - points[j-1][1]]);
+                    }
+                    doc.lines(deltas, points[0][0], points[0][1], [1, 1], 'FD', true);
+                }
+            }
+        }
+
+        // Draw boundary outline
+        if (boundary) {
+            doc.setDrawColor(0, 0, 0);
+            doc.setLineWidth(0.5);
+            for (let i = 0; i < boundary.exterior.length; i++) {
+                const a = toPage(boundary.exterior[i].x, boundary.exterior[i].y);
+                const b = toPage(boundary.exterior[(i + 1) % boundary.exterior.length].x,
+                                  boundary.exterior[(i + 1) % boundary.exterior.length].y);
+                doc.line(a.x, a.y, b.x, b.y);
+            }
+        }
+
+        // Annotate distances along boundary
+        const annotPts = getAnnotationPoints(annotationBoundary, annotationInnerPolys);
+        if (annotPts.length >= 2) {
+            doc.setFontSize(12);
+            doc.setFont('helvetica', 'normal');
+            doc.setTextColor(30, 60, 180);
+
+            for (let i = 0; i < annotPts.length; i++) {
+                const a = annotPts[i];
+                const b = annotPts[(i + 1) % annotPts.length];
+                const d = dist(a, b);
+                if (d < 0.01) continue;
+
+                const midGeo = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+                const sp = toPage(midGeo.x, midGeo.y);
+
+                // Offset label outward from boundary centroid
+                const boundaryCentroid = polyCentroid(annotationBoundary);
+                const dx = midGeo.x - boundaryCentroid.x;
+                const dy = midGeo.y - boundaryCentroid.y;
+                const len = Math.sqrt(dx * dx + dy * dy) || 1;
+                const offsetPx = 10;
+                sp.x += (dx / len) * offsetPx;
+                sp.y -= (dy / len) * offsetPx;
+
+                const label = d.toPrecision(3) + ' m';
+                const tw = doc.getTextWidth(label);
+                const th = 4.5;
+                doc.setFillColor(255, 255, 255);
+                doc.setGState(new (doc as any).GState({ opacity: 0.75 }));
+                doc.roundedRect(sp.x - tw / 2 - 1, sp.y - th + 0.5, tw + 2, th + 1, 0.8, 0.8, 'F');
+                doc.setGState(new (doc as any).GState({ opacity: 1 }));
+                doc.setTextColor(30, 60, 180);
+                doc.text(label, sp.x, sp.y, { align: 'center' });
+            }
+
+            // Draw annotation points as small dots
+            doc.setFillColor(200, 30, 30);
+            for (const p of annotPts) {
+                const sp = toPage(p.x, p.y);
+                doc.circle(sp.x, sp.y, 0.5, 'F');
+            }
+        }
+
+        // Draw area labels
+        doc.setFontSize(14);
+        doc.setFont('helvetica', 'normal');
+        doc.setTextColor(0, 0, 0);
+        for (let i = 0; i < polys.length; i++) {
+            const poly = polys[i];
+            const area = polyArea(poly.exterior);
+            const c = polyCentroid(poly.exterior);
+            const sp = toPage(c.x, c.y);
+            
+            if (polyNumbers && polyNumbers[i] !== undefined) {
+                // Draw number label above area
+                const numLabel = '#' + polyNumbers[i];
+                doc.setFontSize(18);
+                doc.setFont('helvetica', 'bold');
+                doc.setTextColor(0, 0, 0);
+                doc.text(numLabel, sp.x, sp.y - 4, { align: 'center' });
+                
+                // Draw area below
+                doc.setFontSize(14);
+                doc.setFont('helvetica', 'normal');
+                doc.text(formatArea(area), sp.x, sp.y + 4, { align: 'center' });
+            } else {
+                doc.text(formatArea(area), sp.x, sp.y, { align: 'center' });
+            }
+        }
+    };
+
+    // ─── Page 1: Main field with subfields ──────────────────────
+    const sfColors = subfields.map((_, i) => {
+        const hue = (i * 137.5) % 360;
+        const h = hue / 360;
+        // HSL to hex (s=0.5, l=0.65)
+        const s = 0.5, l = 0.65;
+        const hue2rgb = (p: number, q: number, t: number) => {
+            if (t < 0) t += 1; if (t > 1) t -= 1;
+            if (t < 1/6) return p + (q - p) * 6 * t;
+            if (t < 1/2) return q;
+            if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+            return p;
+        };
+        const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+        const p = 2 * l - q;
+        const r = Math.round(hue2rgb(p, q, h + 1/3) * 255);
+        const g = Math.round(hue2rgb(p, q, h) * 255);
+        const b = Math.round(hue2rgb(p, q, h - 1/3) * 255);
+        return '#' + [r, g, b].map(c => c.toString(16).padStart(2, '0')).join('');
+    });
+
+    const sfNumbers = subfields.map((_, i) => i + 1);
+    const innerPolysPage1 = subfields.map(sf => sf.exterior);
+    drawPolyOnPage(
+        doc, subfields, field,
+        'Field Overview — Subfield Divisions',
+        innerPolysPage1, field.exterior,
+        sfColors, centerVoids, sfNumbers
+    );
+
+    // ─── Pages 2..N+1: Individual subfields with radial slices ──
+    for (let s = 0; s < n; s++) {
+        doc.addPage();
+        const sf = subfields[s];
+        const sfSlices = radialSlices.slice(s * k, s * k + k);
+        const sfVoids = s < centerVoids.length ? [centerVoids[s]] : [];
+
+        const sliceColors = sfSlices.map((_, i) => {
+            const hue = (i * 137.5 + s * 60) % 360;
+            const h = hue / 360;
+            const ss = 0.6, l = 0.6;
+            const hue2rgb = (p: number, q: number, t: number) => {
+                if (t < 0) t += 1; if (t > 1) t -= 1;
+                if (t < 1/6) return p + (q - p) * 6 * t;
+                if (t < 1/2) return q;
+                if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+                return p;
+            };
+            const q = l < 0.5 ? l * (1 + ss) : l + ss - l * ss;
+            const p = 2 * l - q;
+            const r = Math.round(hue2rgb(p, q, h + 1/3) * 255);
+            const g = Math.round(hue2rgb(p, q, h) * 255);
+            const b = Math.round(hue2rgb(p, q, h - 1/3) * 255);
+            return '#' + [r, g, b].map(c => c.toString(16).padStart(2, '0')).join('');
+        });
+
+        const innerPolys = sfSlices.map(sl => sl.exterior);
+        drawPolyOnPage(
+            doc, sfSlices, sf,
+            `Subfield #${s + 1} of ${n} — Radial Slices`,
+            innerPolys, sf.exterior,
+            sliceColors, sfVoids
+        );
+    }
+
+    doc.save('field_slicing_report.pdf');
 }

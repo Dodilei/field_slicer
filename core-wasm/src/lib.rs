@@ -3,8 +3,15 @@ pub mod dxf_util;
 pub mod slicing;
 
 use wasm_bindgen::prelude::*;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_wasm_bindgen::to_value;
+
+#[derive(Serialize)]
+pub struct SlicingResult {
+    pub subfields: Vec<geometry::WasmPolygon>,
+    pub center_voids: Vec<geometry::WasmPolygon>,
+    pub radial_slices: Vec<geometry::WasmPolygon>,
+}
 
 #[derive(Deserialize)]
 pub struct SlicerParams {

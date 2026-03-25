@@ -50,6 +50,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
     </div>
 
     <button class="primary" id="download-btn" disabled>Export Output DXF</button>
+    <button class="primary" id="pdf-btn" disabled style="margin-top: 0.5rem;">Export Annotated PDF</button>
   </div>
   <div class="canvas-container">
     <canvas id="canvas"></canvas>

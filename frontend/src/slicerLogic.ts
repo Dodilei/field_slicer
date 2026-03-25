@@ -74,6 +74,10 @@ export async function setupLogic() {
                 centerSlider.step = getNiceStep(subfieldEqRadius * 0.005).toString();
                 centerSlider.value = (subfieldEqRadius * 0.05).toFixed(2);
 
+                snapSlider.max = (subfieldEqRadius * 0.5).toFixed(2);
+                snapSlider.step = getNiceStep(subfieldEqRadius * 0.005).toString();
+                snapSlider.value = (subfieldEqRadius * 0.02).toFixed(2);
+
                 try {
                     updateSlices();
                 } catch (e: any) {
@@ -88,7 +92,7 @@ export async function setupLogic() {
         valK.innerText = kSlider.value;
         valPhase.innerText = phaseSlider.value + '°';
         valAxis.innerText = axisSlider.value + '°';
-        valSnap.innerText = snapSlider.value + '%';
+        valSnap.innerText = snapSlider.value + ' m';
         valCenter.innerText = centerSlider.value + ' m';
         if (!originalPolygon || !wasm) return;
         
@@ -97,6 +101,9 @@ export async function setupLogic() {
         
         centerSlider.max = (subfieldEqRadius * 0.2).toFixed(2);
         centerSlider.step = getNiceStep(subfieldEqRadius * 0.005).toString();
+
+        snapSlider.max = (subfieldEqRadius * 0.5).toFixed(2);
+        snapSlider.step = getNiceStep(subfieldEqRadius * 0.005).toString();
         
         try {
             const params = {
@@ -104,7 +111,7 @@ export async function setupLogic() {
                 k_slices: parseInt(kSlider.value),
                 pizza_phase: parseFloat(phaseSlider.value) / 360.0,
                 axis_rotation: parseFloat(axisSlider.value),
-                snap_tolerance: (parseFloat(snapSlider.value) / 100.0) * subfieldEqRadius,
+                snap_tolerance: parseFloat(snapSlider.value),
                 center_radius: parseFloat(centerSlider.value)
             };
             const result: SlicingResult = wasm.execute_slicing(originalPolygon, params);

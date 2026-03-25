@@ -37,10 +37,10 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
       <input type="range" id="phase-slider" min="-90" max="90" step="1" value="0" />
 
       <div class="control-header">
-        <span>Snap Tolerance (%)</span>
-        <span class="val-display" id="val-snap">5.0%</span>
+        <span>Snap Tolerance (m)</span>
+        <span class="val-display" id="val-snap">0.0 m</span>
       </div>
-      <input type="range" id="snap-slider" min="0" max="50" step="0.5" value="5" />
+      <input type="range" id="snap-slider" min="0" max="10" step="0.1" value="0.5" />
 
       <div class="control-header">
         <span>Center Radius (m)</span>

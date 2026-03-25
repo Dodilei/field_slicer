@@ -31,16 +31,16 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
       <input type="range" id="axis-slider" min="0" max="180" step="1" value="0" />
 
       <div class="control-header">
-        <span>Phase Alignment</span>
-        <span class="val-display" id="val-phase">0.0</span>
+        <span>Phase Alignment (°)</span>
+        <span class="val-display" id="val-phase">0°</span>
       </div>
-      <input type="range" id="phase-slider" min="0" max="1" step="0.01" value="0" />
+      <input type="range" id="phase-slider" min="-90" max="90" step="1" value="0" />
 
       <div class="control-header">
         <span>Snap Tolerance (%)</span>
         <span class="val-display" id="val-snap">5.0%</span>
       </div>
-      <input type="range" id="snap-slider" min="0" max="20" step="0.5" value="5" />
+      <input type="range" id="snap-slider" min="0" max="50" step="0.5" value="5" />
 
       <div class="control-header">
         <span>Center Radius (m)</span>

@@ -71,7 +71,7 @@ export async function setupLogic() {
                 const area = polyArea(originalPolygon!.exterior);
                 const subfieldEqRadius = Math.sqrt((area / parseInt(nSlider.value)) / Math.PI);
                 centerSlider.max = (subfieldEqRadius * 0.2).toFixed(2);
-                centerSlider.step = (subfieldEqRadius * 0.005).toFixed(3);
+                centerSlider.step = getNiceStep(subfieldEqRadius * 0.005).toString();
                 centerSlider.value = (subfieldEqRadius * 0.05).toFixed(2);
 
                 try {
@@ -86,7 +86,7 @@ export async function setupLogic() {
     const updateSlices = async () => {
         valN.innerText = nSlider.value;
         valK.innerText = kSlider.value;
-        valPhase.innerText = phaseSlider.value;
+        valPhase.innerText = phaseSlider.value + '°';
         valAxis.innerText = axisSlider.value + '°';
         valSnap.innerText = snapSlider.value + '%';
         valCenter.innerText = centerSlider.value + ' m';
@@ -96,13 +96,13 @@ export async function setupLogic() {
         const subfieldEqRadius = Math.sqrt((area / parseInt(nSlider.value)) / Math.PI);
         
         centerSlider.max = (subfieldEqRadius * 0.2).toFixed(2);
-        centerSlider.step = (subfieldEqRadius * 0.005).toFixed(3);
+        centerSlider.step = getNiceStep(subfieldEqRadius * 0.005).toString();
         
         try {
             const params = {
                 n_subfields: parseInt(nSlider.value),
                 k_slices: parseInt(kSlider.value),
-                pizza_phase: parseFloat(phaseSlider.value),
+                pizza_phase: parseFloat(phaseSlider.value) / 360.0,
                 axis_rotation: parseFloat(axisSlider.value),
                 snap_tolerance: (parseFloat(snapSlider.value) / 100.0) * subfieldEqRadius,
                 center_radius: parseFloat(centerSlider.value)
@@ -442,6 +442,17 @@ function angleBetween(a: Point, b: Point, c: Point): number {
     if (m1 < 1e-12 || m2 < 1e-12) return Math.PI;
     const cos = Math.max(-1, Math.min(1, dot / (m1 * m2)));
     return Math.acos(cos);
+}
+
+function getNiceStep(raw: number): number {
+    if (raw <= 0) return 0.01;
+    const pow10 = Math.floor(Math.log10(raw));
+    const base = Math.pow(10, pow10);
+    const scaled = raw / base;
+    if (scaled <= 1) return 1 * base;
+    if (scaled <= 2.5) return 2.5 * base; // Added 2.5 for better granularity
+    if (scaled <= 5) return 5 * base;
+    return 10 * base;
 }
 
 function pointOnSegment(p: Point, a: Point, b: Point, tol: number): boolean {

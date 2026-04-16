@@ -483,11 +483,8 @@ function getEffectiveVertices(pts: Point[]): Point[] {
         const curr = ring[i];
         const next = ring[(i + 1) % n];
         const angle = angleBetween(prev, curr, next);
-        // Cross product determines convex vs reflex
-        const cross = (curr.x - prev.x) * (next.y - curr.y) - (curr.y - prev.y) * (next.x - curr.x);
-        // If reflex (concave vertex), always include it
-        // If convex, include only if angle < 150°
-        if (cross < 0 || angle < (150 * Math.PI / 180)) {
+        // Keep vertex if it has any angle (internal or external) below 150°
+        if (angle < (150 * Math.PI / 180)) {
             result.push(curr);
         }
     }
@@ -605,6 +602,7 @@ async function generatePDF(
         fillColors?: string[],
         voids?: Polygon[],
         polyNumbers?: number[],
+        skipAnnotation?: boolean,
     ) => {
         // Title
         doc.setFontSize(14);
@@ -693,8 +691,9 @@ async function generatePDF(
         }
 
         // Annotate distances along boundary
-        const annotPts = getAnnotationPoints(annotationBoundary, annotationInnerPolys);
-        if (annotPts.length >= 2) {
+        if (!skipAnnotation) {
+            const annotPts = getAnnotationPoints(annotationBoundary, annotationInnerPolys);
+            if (annotPts.length >= 2) {
             doc.setFontSize(12);
             doc.setFont('helvetica', 'normal');
             doc.setTextColor(30, 60, 180);
@@ -713,7 +712,7 @@ async function generatePDF(
                 const dx = midGeo.x - boundaryCentroid.x;
                 const dy = midGeo.y - boundaryCentroid.y;
                 const len = Math.sqrt(dx * dx + dy * dy) || 1;
-                const offsetPx = 10;
+                const offsetPx = 5;
                 sp.x += (dx / len) * offsetPx;
                 sp.y -= (dy / len) * offsetPx;
 
@@ -735,9 +734,10 @@ async function generatePDF(
                 doc.circle(sp.x, sp.y, 0.5, 'F');
             }
         }
+    }
 
-        // Draw area labels
-        doc.setFontSize(14);
+    // Draw area labels
+    doc.setFontSize(skipAnnotation ? 7 : 14);
         doc.setFont('helvetica', 'normal');
         doc.setTextColor(0, 0, 0);
         for (let i = 0; i < polys.length; i++) {
@@ -764,7 +764,40 @@ async function generatePDF(
         }
     };
 
-    // ─── Page 1: Main field with subfields ──────────────────────
+    // ─── Page 1: Full field with all radial slices ──────────────
+    const allSliceColors: string[] = [];
+    for (let s = 0; s < n; s++) {
+        for (let i = 0; i < k; i++) {
+            const hue = (i * 137.5 + s * 60) % 360;
+            const h = hue / 360;
+            const ss = 0.6, l = 0.6;
+            const hue2rgb = (p: number, q: number, t: number) => {
+                if (t < 0) t += 1; if (t > 1) t -= 1;
+                if (t < 1/6) return p + (q - p) * 6 * t;
+                if (t < 1/2) return q;
+                if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+                return p;
+            };
+            const q = l < 0.5 ? l * (1 + ss) : l + ss - l * ss;
+            const p = 2 * l - q;
+            const r = Math.round(hue2rgb(p, q, h + 1/3) * 255);
+            const g = Math.round(hue2rgb(p, q, h) * 255);
+            const b = Math.round(hue2rgb(p, q, h - 1/3) * 255);
+            allSliceColors.push('#' + [r, g, b].map(c => c.toString(16).padStart(2, '0')).join(''));
+        }
+    }
+
+    const allInnerPolys = radialSlices.map(sl => sl.exterior);
+    drawPolyOnPage(
+        doc, radialSlices, field,
+        'Talhão - Divisão completa',
+        allInnerPolys, field.exterior,
+        allSliceColors, centerVoids, undefined, true
+    );
+
+    doc.addPage();
+
+    // ─── Page 2: Main field with subfields ──────────────────────
     const sfColors = subfields.map((_, i) => {
         const hue = (i * 137.5) % 360;
         const h = hue / 360;
@@ -789,12 +822,12 @@ async function generatePDF(
     const innerPolysPage1 = subfields.map(sf => sf.exterior);
     drawPolyOnPage(
         doc, subfields, field,
-        'Field Overview — Subfield Divisions',
+        'Talhão - Divisão por praças',
         innerPolysPage1, field.exterior,
         sfColors, centerVoids, sfNumbers
     );
 
-    // ─── Pages 2..N+1: Individual subfields with radial slices ──
+    // ─── Pages 3..N+2: Individual subfields with radial slices ──
     for (let s = 0; s < n; s++) {
         doc.addPage();
         const sf = subfields[s];
@@ -823,7 +856,7 @@ async function generatePDF(
         const innerPolys = sfSlices.map(sl => sl.exterior);
         drawPolyOnPage(
             doc, sfSlices, sf,
-            `Subfield #${s + 1} of ${n} — Radial Slices`,
+            `Praça #${s + 1} de ${n} — Piquetes`,
             innerPolys, sf.exterior,
             sliceColors, sfVoids
         );

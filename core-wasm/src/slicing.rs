@@ -302,7 +302,36 @@ fn radial_slice_with_snap(
         all_boundary_points.push(boundary_pts);
     }
     
+    // Step 1.5: Snap boundary points to subfield/boundary vertices
+    if snap_tolerance > 0.0 {
+        let tol_sq = snap_tolerance * snap_tolerance;
+        for i in 0..subfields.len() {
+            for pi in 0..all_boundary_points[i].len() {
+                let a = all_boundary_points[i][pi];
+                let mut best_dist = tol_sq;
+                let mut best_vertex = None;
+                
+                for sf in subfields {
+                    for v in &sf.exterior().0 {
+                        let dx = a.x - v.x;
+                        let dy = a.y - v.y;
+                        let d_sq = dx*dx + dy*dy;
+                        if d_sq < best_dist && d_sq > 1e-12 {
+                            best_dist = d_sq;
+                            best_vertex = Some(*v);
+                        }
+                    }
+                }
+                
+                if let Some(v) = best_vertex {
+                    all_boundary_points[i][pi] = v;
+                }
+            }
+        }
+    }
+    
     // Step 2: Snap boundary points between neighboring subfields
+
     if snap_tolerance > 0.0 {
         let tol_sq = snap_tolerance * snap_tolerance;
         for i in 0..subfields.len() {

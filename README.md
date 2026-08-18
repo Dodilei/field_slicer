@@ -1,8 +1,35 @@
+<div align="center">
+
 # Field Slicer
+### Web Tool for Algorithmic Field Partitioning
+
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-green.svg)](LICENSE)
+[![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![Rust](https://img.shields.io/badge/Rust-D34516?logo=rust&logoColor=white)](https://rust-lang.org/)
+[![Workflow](https://img.shields.io/badge/Vibe--Coding-Antigravity-purple)]()
+
+[![Domain](https://img.shields.io/badge/Domain-Computational%20Geometry-orange)]()
 
 This repository contains a tool for partitioning irregular polygons into equal-area subfields and radial slices. It serves as a "vibe-coding" experiment, where the entire codebase was generated through the orchestration of AI agents. This process demonstrated a positive workflow for building complex geometric tools without manual code modification, though it highlighted limitations in handling intricate topological edge cases that required multiple iterative steps to resolve.
 
-![Field Slicer UI](.docs/ui_screenshot.png)
+</div>
+
+---
+<div align="center">
+  
+## Visual Gallery
+
+<!-- FIGURE 1 BLOCK -->
+<p></p>
+<div align="center" style="margin-bottom: 50px;"> <!-- Increased gap after first block -->
+  <p style="margin: 0 0 5px 0; line-height: 1.2;"> <!-- Tightened paragraph margins -->
+    Figure 1: Screenshot of the Field Slicer UI.<br>
+  </p>
+  <img src=".docs/ui_screenshot.png" alt="Field Slicer UI" width="85%" style="margin-top: 5px;"> <!-- Tight gap to image -->
+</div>
+</div>
+
+---
 
 ## Project Architecture
 
